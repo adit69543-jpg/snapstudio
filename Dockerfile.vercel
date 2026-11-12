@@ -1,0 +1,68 @@
+
+# =====================================
+# STAGE 1: BUILD FRONTEND VITE
+# =====================================
+FROM node:22-alpine AS frontend
+
+WORKDIR /app
+
+COPY package*.json ./
+
+RUN npm ci
+
+COPY . .
+
+RUN npm run build
+
+
+# =====================================
+# STAGE 2: LARAVEL + FRANKENPHP
+# =====================================
+FROM dunglas/frankenphp:1-php8.2
+
+WORKDIR /app
+
+# Install PHP extensions dan Composer
+RUN install-php-extensions \
+    @composer \
+    pdo_mysql \
+    bcmath \
+    intl \
+    zip \
+    opcache
+
+# Copy source Laravel
+COPY . .
+
+# Install dependensi Laravel
+RUN composer install \
+    --no-dev \
+    --optimize-autoloader \
+    --no-interaction \
+    --prefer-dist
+
+# Copy hasil build frontend Vite
+COPY --from=frontend /app/public/build ./public/build
+
+# Siapkan folder Laravel
+RUN mkdir -p \
+    storage/framework/cache \
+    storage/framework/sessions \
+    storage/framework/views \
+    storage/logs \
+    bootstrap/cache \
+    && chmod -R 775 storage bootstrap/cache
+
+# Konfigurasi production
+ENV APP_ENV=production
+ENV APP_DEBUG=false
+ENV SERVER_NAME=:8080
+
+# Health check aplikasi melalui HTTP port 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -fsS http://localhost:8080/ || exit 1
+
+EXPOSE 8080
+
+# Jalankan Laravel menggunakan FrankenPHP
+CMD ["sh", "-c", "frankenphp php-server --listen :${PORT:-8080} --root public"]
